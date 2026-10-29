@@ -1,0 +1,177 @@
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Planification de garde</title>
+<style>
+body{font-family:Arial;background:#f1f5f9;margin:0;color:#18334b}
+header{background:#16466c;color:white;padding:22px}
+main{max-width:1100px;margin:auto;padding:20px}
+section{background:white;padding:18px;margin:15px 0;border-radius:10px}
+button{background:#176ca5;color:white;border:0;border-radius:6px;padding:10px;margin:4px;cursor:pointer}
+input,select{padding:8px;margin:4px;max-width:100%}
+table{border-collapse:collapse;width:100%}
+td,th{border:1px solid #ddd;padding:8px;text-align:left}
+th{background:#e4edf6}
+.scroll{overflow:auto}
+.note{background:#fff0cf;padding:12px}
+</style>
+</head>
+<body>
+<header>
+<h2>PLANIFICATION DE GARDE</h2>
+<p>Gestion des gardes des médecins anesthésistes</p>
+</header>
+<main>
+<p class="note">Version de démonstration avec médecins fictifs. Ne pas utiliser pour des gardes réelles : les repos réglementaires ne sont pas encore vérifiés.</p>
+
+<section>
+<h3>Gestion du planning</h3>
+<label>Mois : <input type="month" id="mois"></label>
+<button onclick="generer()">Générer le planning</button>
+<button onclick="exporter()">Exporter CSV</button>
+<p id="message"></p>
+<div class="scroll">
+<table>
+<thead><tr><th>Date</th><th>Bloc central</th><th>Maternité 1</th><th>Maternité 2</th></tr></thead>
+<tbody id="planning"></tbody>
+</table>
+</div>
+</section>
+
+<section>
+<h3>Gestion des 30 médecins fictifs</h3>
+<p>Définis les habilitations et le quota mensuel de chaque médecin.</p>
+<div class="scroll">
+<table>
+<thead><tr><th>Médecin</th><th>Central</th><th>Maternité</th><th>Quota</th></tr></thead>
+<tbody id="medecins"></tbody>
+</table>
+</div>
+</section>
+
+<section>
+<h3>Souhaits et indisponibilités</h3>
+<select id="choixMedecin"></select>
+<input type="date" id="dateSouhait">
+<select id="typeSouhait">
+<option value="souhait">Souhaite être de garde</option>
+<option value="absent">Indisponible</option>
+<option value="libre">Sans préférence</option>
+</select>
+<button onclick="enregistrerSouhait()">Enregistrer</button>
+<p id="confirmation"></p>
+</section>
+</main>
+<script>
+const medecins=Array.from({length:30},(_,i)=>({
+id:i+1,
+nom:"Médecin fictif "+(i+1),
+central:true,
+maternite:true,
+quota:3
+}));
+const souhaits={};
+let affectations={};
+
+const $=id=>document.getElementById(id);
+const pad=n=>String(n).padStart(2,"0");
+const dates=()=>{
+const [a,m]=$("mois").value.split("-").map(Number);
+return Array.from({length:new Date(a,m,0).getDate()},
+(_,i)=>`${a}-${pad(m)}-${pad(i+1)}`);
+};
+const disponible=(med,date,poste,utilises)=>{
+return (poste===0?med.central:med.maternite)
+&&souhaits[med.id+"|"+date]!=="absent"
+&&!utilises.includes(med.id);
+};
+function afficherMedecins(){
+$("medecins").innerHTML=medecins.map(m=>`
+<tr>
+<td>${m.nom}</td>
+<td><input type="checkbox" ${m.central?"checked":""}
+onchange="modifier(${m.id},'central',this.checked)"></td>
+<td><input type="checkbox" ${m.maternite?"checked":""}
+onchange="modifier(${m.id},'maternite',this.checked)"></td>
+<td><input type="number" min="0" max="31" value="${m.quota}"
+onchange="modifier(${m.id},'quota',this.value)"></td>
+</tr>`).join("");
+$("choixMedecin").innerHTML=medecins.map(m=>
+`<option value="${m.id}">${m.nom}</option>`).join("");
+}
+function modifier(id,champ,valeur){
+const m=medecins.find(x=>x.id===id);
+m[champ]=champ==="quota"?Math.max(0,Number(valeur)||0):valeur;
+}
+function enregistrerSouhait(){
+const id=$("choixMedecin").value;
+const date=$("dateSouhait").value;
+if(!date){alert("Choisis une date.");return;}
+souhaits[id+"|"+date]=$("typeSouhait").value;
+$("confirmation").textContent="Demande enregistrée pour "+date;
+}
+function generer(){
+affectations={};
+const compte=Object.fromEntries(medecins.map(m=>[m.id,0]));
+let manquants=0;
+for(const date of dates()){
+const utilises=[];
+for(let poste=0;poste<3;poste++){
+const candidats=medecins.filter(m=>disponible(m,date,poste,utilises));
+candidats.sort((a,b)=>{
+const score=m=>compte[m.id]/Math.max(1,m.quota)
++(compte[m.id]>=m.quota?2:0)
+-(souhaits[m.id+"|"+date]==="souhait"?1:0);
+return score(a)-score(b);
+});
+const choisi=candidats[0];
+if(choisi){
+affectations[date+"|"+poste]=choisi.id;
+compte[choisi.id]++;
+utilises.push(choisi.id);
+}else manquants++;
+}
+}
+afficherPlanning();
+$("message").textContent=manquants?
+manquants+" poste(s) non pourvu(s). Repos non vérifiés.":
+"Proposition générée. Attention : repos non vérifiés.";
+}
+function afficherPlanning(){
+$("planning").innerHTML=dates().map(date=>{
+const jour=new Date(date+"T12:00:00").getDay();
+const cellules=[0,1,2].map(p=>{
+const id=affectations[date+"|"+p];
+const m=medecins.find(x=>x.id===id);
+return `<td>${m?m.nom:"Non attribué"}</td>`;
+}).join("");
+return `<tr style="${jour===0||jour===6?'background:#fff2e6':''}">
+<td>${date}</td>${cellules}</tr>`;
+}).join("");
+}
+function exporter(){
+const lignes=[["Date","Bloc central","Maternité 1","Maternité 2"]];
+for(const date of dates()){
+lignes.push([date,...[0,1,2].map(p=>{
+const m=medecins.find(x=>x.id===affectations[date+"|"+p]);
+return m?m.nom:"";
+})]);
+}
+const csv="\uFEFF"+lignes.map(l=>l.join(";")).join("\n");
+const url=URL.createObjectURL(new Blob([csv],{type:"text/csv;charset=utf-8"}));
+const a=document.createElement("a");
+a.href=url;a.download="planning-gardes.csv";a.click();
+URL.revokeObjectURL(url);
+}
+const aujourd=new Date();
+$("mois").value=aujourd.getFullYear()+"-"+pad(aujourd.getMonth()+1);
+$("dateSouhait").value=aujourd.getFullYear()+"-"+pad(aujourd.getMonth()+1)+"-"+pad(aujourd.getDate());
+$("mois").addEventListener("change",afficherPlanning);
+afficherMedecins();
+afficherPlanning();
+</script>
+</body>
+</html>
